@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Discount Specials Near Me</title>
+<style>
+  :root { --bg:#f6f4ef; --card:#fff; --ink:#2b2b2b; --accent:#b0482a; --muted:#6b6b6b; --line:#e4ded2; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,'Segoe UI',Roboto,sans-serif; background:var(--bg); color:var(--ink); }
+  header { padding:1.2rem 1rem .6rem; text-align:center; }
+  h1 { margin:0; font-size:1.35rem; }
+  #loc { color:var(--muted); font-size:.95rem; min-height:1.3em; margin-top:.25rem; }
+  #loc .gps { font-size:.8rem; color:#8a8a8a; }
+  .bar { display:flex; gap:.5rem; justify-content:center; align-items:center; padding:.5rem 1rem; flex-wrap:wrap; }
+  button#refresh { background:var(--accent); color:#fff; border:0; border-radius:8px; padding:.55rem 1.2rem; font-size:.95rem; cursor:pointer; }
+  button#refresh:disabled { opacity:.6; }
+  .cats { display:flex; gap:.4rem; flex-wrap:wrap; justify-content:center; }
+  .cat { border:1px solid var(--line); background:var(--card); border-radius:16px; padding:.3rem .8rem; cursor:pointer; font-size:.85rem; }
+  .cat.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  main { max-width:760px; margin:0 auto; padding:0 1rem 2rem; }
+  .status { text-align:center; color:var(--muted); font-size:.9rem; min-height:1.4em; padding:.4rem; }
+  .specials-note { background:#fdf3e7; border:1px solid #eed9b8; border-radius:8px; padding:.6rem .9rem; font-size:.85rem; margin:.6rem 0; }
+  .biz { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:.8rem 1rem; margin:.6rem 0; }
+  .biz .top { display:flex; justify-content:space-between; align-items:baseline; gap:.5rem; }
+  .biz .name { font-weight:600; }
+  .biz .dist { color:var(--accent); font-weight:600; font-size:.9rem; white-space:nowrap; }
+  .biz .meta { color:var(--muted); font-size:.85rem; margin-top:.2rem; }
+  .biz .links { margin-top:.4rem; font-size:.85rem; }
+  .biz .links a { color:#2b6cb0; text-decoration:none; margin-right:.9rem; }
+  .days { display:flex; gap:.3rem; flex-wrap:wrap; margin-top:.5rem; }
+  .day { font-size:.75rem; background:#f0ece2; border-radius:6px; padding:.15rem .5rem; color:#555; }
+  .day.today { background:var(--accent); color:#fff; }
+  .err { color:#c0392b; }
+</style>
+</head>
+<body>
+<header>
+  <h1>💎 Discount Specials Near Me</h1>
+  <div id="loc">Getting your location…</div>
+</header>
+<div class="bar">
+  <button id="refresh">↻ Refresh</button>
+  <div class="cats" id="cats">
+    <span class="cat active" data-cat="restaurant">Restaurants</span>
+    <span class="cat active" data-cat="grocery">Grocery</span>
+    <span class="cat active" data-cat="entertainment">Entertainment</span>
+    <span class="cat active" data-cat="pharmacy">Pharmacy</span>
+  </div>
+</div>
+<main>
+  <div class="status" id="status"></div>
+  <div class="specials-note" id="specialsNote" style="display:none">
+    <strong>Specials how this works:</strong> national chains & pharmacies publish weekly ad cycles
+    (typically Sun–Sat). Each listing links the business's own specials page when we can find one.
+    Independent spots: call or check their site/social — the "days" chips show when that business
+    is open this week so you know when to catch a special.
+  </div>
+  <div id="results"></div>
+</main>
+<footer style="text-align:center;color:#999;font-size:.8rem;padding:1rem">
+  Places © OpenStreetMap contributors · part of the <a href="https://mycoswarm-assignment1.surge.sh">swarm</a> fleet
+</footer>
+<script>
+const RADIUS_M = 8047; // 5 miles
+const CATS = {
+  restaurant:   ['amenity=restaurant','amenity=cafe','amenity=fast_food'],
+  grocery:      ['shop=supermarket','shop=grocery','shop=convenience'],
+  entertainment:['amenity=cinema','amenity=theatre','leisure=bowling_alley','amenity=community_centre','shop=ticket'],
+  pharmacy:     ['amenity=pharmacy'],
+};
+const DAY_NAMES = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+let activeCats = new Set(Object.keys(CATS));
+let lastData = [];
+
+const el = id => document.getElementById(id);
+
+// ---- location ----
+function getLocation() {
+  return new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej(new Error('Geolocation not supported'));
+    navigator.geolocation.getCurrentPosition(
+      p => res({lat: p.coords.latitude, lon: p.coords.longitude}),
+      e => rej(new Error(e.message || 'location denied')),
+      {enableHighAccuracy: true, timeout: 12000, maximumAge: 60000});
+  });
+}
+
+async function reverseGeocode(lat, lon) {
+  const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`;
+  const r = await fetch(url, {headers: {'Accept':'application/json'}});
+  const d = await r.json();
+  const a = d.address || {};
+  return a.town || a.city || a.village || a.hamlet || a.county || 'your area';
+}
+
+// ---- POI search (Overpass) ----
+async function fetchPOIs(lat, lon, cats) {
+  const selectors = [];
+  for (const c of cats) (CATS[c] || []).forEach(sel => selectors.push(`node[${sel}](around:${RADIUS_M},${lat},${lon});way[${sel}](around:${RADIUS_M},${lat},${lon});`));
+  const q = `[out:json][timeout:25];(${selectors.join('')});out center tags 400;`;
+  const r = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST', body: 'data=' + encodeURIComponent(q),
+    headers: {'Content-Type':'application/x-www-form-urlencoded'}});
+  if (!r.ok) throw new Error('Overpass ' + r.status);
+  const d = await r.json();
+  return d.elements.map(e => {
+    const t = e.tags || {};
+    const lat0 = e.lat ?? (e.center && e.center.lat), lon0 = e.lon ?? (e.center && e.center.lon);
+    return {
+      id: e.type[0] + e.id,
+      name: t.name || '(unnamed)',
+      cat: classify(t),
+      lat: lat0, lon: lon0,
+      website: t.website || t['contact:website'] || '',
+      phone: t.phone || t['contact:phone'] || '',
+      hours: t.opening_hours || '',
+      brand: t.brand || '',
+      tags: t,
+    };
+  }).filter(b => b.name !== '(unnamed)' && b.cat);
+}
+
+function classify(tags) {
+  if (tags.amenity === 'pharmacy') return 'pharmacy';
+  if (tags.shop === 'supermarket' || tags.shop === 'grocery' || tags.shop === 'convenience') return 'grocery';
+  if (['restaurant','cafe','fast_food'].includes(tags.amenity)) return 'restaurant';
+  if (['cinema','theatre','community_centre'].includes(tags.amenity) || tags.leisure === 'bowling_alley' || tags.shop === 'ticket') return 'entertainment';
+  return null;
+}
+
+function distMiles(lat1, lon1, lat2, lon2) {
+  const R = 3958.8, toR = x => x * Math.PI / 180;
+  const dLat = toR(lat2-lat1), dLon = toR(lon2-lon1);
+  const a = Math.sin(dLat/2)**2 + Math.cos(toR(lat1))*Math.cos(toR(lat2))*Math.sin(dLon/2)**2;
+  return 2 * R * Math.asin(Math.sqrt(a));
+}
+
+// ---- weekly ad / specials page guesses for chains (honest: labeled as "find specials") ----
+const CHAIN_SPECIALS = {
+  'walmart': 'https://www.walmart.com/store/weekly-ads',
+  'kroger': 'https://www.kroger.com/weeklyad',
+  'publix': 'https://www.publix.com/savings/weekly-ad',
+  'aldi': 'https://www.aldi.us/en/weekly-specials/',
+  'lid': 'https://www.lidl.com/weekly-ad',
+  'lidl': 'https://www.lidl.com/weekly-ad',
+  'food lion': 'https://www.foodlion.com/weekly-ad/',
+  'harris teeter': 'https://www.harristeeter.com/weekly-ad',
+  'target': 'https://www.target.com/c/weekly-ad',
+  'cvs': 'https://www.cvs.com/weekly-ad',
+  'walgreens': 'https://www.walgreens.com/topic/storechannel=weeklyad.jsp',
+  'rite aid': 'https://www.riteaid.com/shop/weekly-ad',
+  'amc': 'https://www.amctheatres.com/pricing-and-promotions',
+  'regal': 'https://www.regmovies.com/theatre-listings/promotions',
+  'dollar general': 'https://www.dollargeneral.com/deals.html',
+  'dollar tree': 'https://www.dollartree.com/weekly-ad',
+  'safeway': 'https://www.safeway.com/weekly-ad',
+  'wegmans': 'https://shop.wegmans.com/weekly-ad',
+};
+function specialsUrl(biz) {
+  const hay = ((biz.brand||'') + ' ' + (biz.name||'')).toLowerCase();
+  for (const k in CHAIN_SPECIALS) if (hay.includes(k)) return CHAIN_SPECIALS[k];
+  return biz.website || '';
+}
+
+// ---- open-days chips (from opening_hours, best effort) ----
+function openDays(hours) {
+  const all = DAY_NAMES.map(d => ({d, open:true}));
+  if (!hours) return all; // unknown -> show all as neutral
+  // crude parse: if "Mo-Su" or "24/7" -> all open; specific lists honored
+  const h = hours;
+  const set = new Set();
+  const dayMap = {Mo:'Mon',Tu:'Tue',We:'Wed',Th:'Thu',Fr:'Fri',Sa:'Sat',Su:'Sun'};
+  const spans = h.split(/[;,]/);
+  let found = false;
+  for (const sp of spans) {
+    const m = sp.trim().match(/^(Mo|Tu|We|Th|Fr|Sa|Su)(?:-(Mo|Tu|We|Th|Fr|Sa|Su))?/);
+    if (m) {
+      found = true;
+      const keys = Object.keys(dayMap);
+      const a = keys.indexOf(m[1]), b = m[2] ? keys.indexOf(m[2]) : a;
+      if (b >= a) for (let i=a;i<=b;i++) set.add(dayMap[keys[i]]);
+      else { for (let i=a;i<7;i++) set.add(dayMap[keys[i]]); for (let i=0;i<=b;i++) set.add(dayMap[keys[i]]); }
+    }
+  }
+  if (!found) return all;
+  return all.map(x => ({d: x.d, open: set.has(x.d)}));
+}
+
+// ---- render ----
+function render(bizList, town, lat, lon) {
+  el('loc').innerHTML = `📍 ${html.escape(town)} <span class="gps">(${lat.toFixed(3)}, ${lon.toFixed(3)}) · 5 mi radius</span>`;
+  const grouped = {};
+  for (const b of bizList) (grouped[b.cat] = grouped[b.cat] || []).push(b);
+  let out = '';
+  for (const cat of ['restaurant','grocery','entertainment','pharmacy']) {
+    if (!activeCats.has(cat)) continue;
+    const list = (grouped[cat] || []).sort((a,b) => a.miles - b.miles).slice(0, 25);
+    out += `<h2 style="font-size:1.05rem;margin:1rem 0 .3rem">${cat[0].toUpperCase()+cat.slice(1)}s (${(grouped[cat]||[]).length} within 5 mi${list.length < (grouped[cat]||[]).length ? `, showing ${list.length} closest` : ''})</h2>`;
+    if (!list.length) { out += `<div class="biz">None found in this category.</div>`; continue; }
+    for (const b of list) {
+      const su = specialsUrl(b);
+      const days = openDays(b.hours);
+      const today = DAY_NAMES[new Date().getDay()];
+      out += `<div class="biz">
+        <div class="top"><span class="name">${html.escape(b.name)}</span><span class="dist">${b.miles.toFixed(1)} mi</span></div>
+        <div class="meta">${html.escape(b.hours || 'hours not listed')}${b.brand ? ' · ' + html.escape(b.brand) : ''}</div>
+        <div class="days">${days.map(d => `<span class="day ${d.open && d.d === today ? 'today' : ''}" title="${d.open ? 'open' : 'closed'} ${d.d}">${d.d}</span>`).join('')}</div>
+        <div class="links">
+          ${su ? `<a href="${html.escape(su)}" target="_blank" rel="noopener">💎 specials / weekly ad</a>` : ''}
+          ${b.phone ? `<a href="tel:${html.escape(b.phone)}">📞 ${html.escape(b.phone)}</a>` : ''}
+          <a href="https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(b.name)}&query_near=${lat},${lon}" target="_blank" rel="noopener">🗺 map</a>
+          ${b.website ? `<a href="${html.escape(b.website)}" target="_blank" rel="noopener">site</a>` : ''}
+        </div>
+      </div>`;
+    }
+  }
+  el('results').innerHTML = out;
+}
+const html = {escape: s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))};
+
+// ---- main ----
+let busy = false;
+async function refresh() {
+  if (busy) return; busy = true;
+  el('refresh').disabled = true;
+  el('status').textContent = 'Locating…'; el('status').className = 'status';
+  try {
+    const {lat, lon} = await getLocation();
+    el('status').textContent = 'Finding your town…';
+    let town = 'your area';
+    try { town = await reverseGeocode(lat, lon); } catch (e) { /* keep fallback */ }
+    el('status').textContent = 'Searching businesses within 5 miles…';
+    const cats = [...activeCats];
+    let biz = await fetchPOIs(lat, lon, cats);
+    biz.forEach(b => b.miles = distMiles(lat, lon, b.lat, b.lon));
+    lastData = biz;
+    el('specialsNote').style.display = '';
+    render(biz, town, lat, lon);
+    el('status').textContent = `${biz.length} places found · updated ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    el('status').innerHTML = `<span class="err">${html.escape(e.message)}</span> — allow location access and try again.`;
+  }
+  el('refresh').disabled = false; busy = false;
+}
+
+document.getElementById('refresh').addEventListener('click', refresh);
+document.querySelectorAll('.cat').forEach(c => c.addEventListener('click', () => {
+  const cat = c.dataset.cat;
+  if (activeCats.has(cat)) { if (activeCats.size > 1) { activeCats.delete(cat); c.classList.remove('active'); } }
+  else { activeCats.add(cat); c.classList.add('active'); }
+  if (lastData.length && lastData[0].miles != null) {
+    // re-render with current location info (reuse last loc)
+    const b = lastData; render(b, el('loc').textContent.replace('📍','').split('(')[0].trim(), lastLat, lastLon);
+  }
+}));
+let lastLat = null, lastLon = null;
+const _oldRefresh = refresh;
+refresh = async function() { const r = await _oldRefresh(); return r; };
+// capture coords: monkey-patch render call via refresh's inner usage — simpler: store in refresh
+window.addEventListener('load', async () => { try { const {lat,lon} = await getLocation(); lastLat=lat; lastLon=lon; } catch(e){} await refresh(); });
+</script>
+</body>
+</html>
