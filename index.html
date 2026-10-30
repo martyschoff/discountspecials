@@ -30,6 +30,7 @@
   .biz .links a { color:#2b6cb0; text-decoration:none; margin-right:.9rem; }
   .days { display:flex; gap:.3rem; flex-wrap:wrap; margin-top:.5rem; }
   .day { font-size:.75rem; background:#f0ece2; border-radius:6px; padding:.15rem .5rem; color:#555; }
+  .day.closed { opacity:.35; text-decoration: line-through; }
   .day.today { background:var(--accent); color:#fff; }
   .err { color:#c0392b; }
 </style>
@@ -237,7 +238,7 @@ function renderBiz(biz) {
   const daysHtml = hours.map(h => {
     const dateStr = h.date;
     const isToday = h.isToday;
-    if (!isToday && !h.isOpen) return '';
+    // closed days stay visible, muted via .closed class
     let cls = ' day';
     if (isToday) cls += ' today';
     else if (!h.isOpen) cls += ' closed';
@@ -263,8 +264,8 @@ function renderBiz(biz) {
 
 function render() {
   const results = el('results');
-  if (lastData && lastData.length) {
-    const sorted = [...lastData].sort((a, b) => distMiles(a.lat, a.lon, lastData.userLat, lastData.userLon) - distMiles(b.lat, b.lon, lastData.userLat, lastData.userLon));
+  if (lastData && lastData.list && lastData.list.length) {
+    const sorted = [...lastData.list].sort((a, b) => distMiles(a.lat, a.lon, lastData.userLat, lastData.userLon) - distMiles(b.lat, b.lon, lastData.userLat, lastData.userLon));
     results.innerHTML = sorted.map(renderBiz).join('');
   } else {
     results.innerHTML = '<p>No matching businesses within 5 miles.</p>';
@@ -308,8 +309,8 @@ async function refresh(force = false) {
     if (force) clearCache();  // explicit refresh = bypass + clear cache
     const cached = force ? null : loadCache();
     if (cached && Math.abs(cached.lat - lat) < 0.01 && Math.abs(cached.lon - lon) < 0.01) {
-      lastData = cached.data; lastData.userLat = lat; lastData.userLon = lon;
-      status.textContent = `cached ${new Date(cached.ts).toLocaleTimeString()} — press refresh to force`;
+      lastData = { list: cached.data, userLat: lat, userLon: lon };
+      status.textContent = `cached ${new Date(cached.timestamp).toLocaleTimeString()} — press refresh to force`;
       render(); return;
     }
     status.textContent = 'Finding your town…';
@@ -320,7 +321,7 @@ async function refresh(force = false) {
     const biz = await fetchPOIs(lat, lon, cats);
     biz.forEach(b => b.miles = distMiles(lat, lon, b.lat, b.lon));
     lastData = { list: biz, userLat: lat, userLon: lon };
-    saveCache({ts: Date.now(), lat, lon, data: biz});
+    saveCache(lat, lon, cats, biz);
     el('loc').innerHTML = `${esc(area)} <span class="gps">(${lat.toFixed(3)}, ${lon.toFixed(3)}) · 5 mi</span>`;
     status.textContent = `${biz.length} places · ${new Date().toLocaleTimeString()}`;
     render();

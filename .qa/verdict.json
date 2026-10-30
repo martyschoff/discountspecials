@@ -2,35 +2,29 @@
  "verdict": "CHANGES_REQUIRED",
  "findings": [
   {
-   "file": "index.html",
-   "issue": "parseHours completely ignores the openingHours parameter and hardcodes isOpen: true, violating the Open-Day Projection transformation requirement.",
-   "severity": "major"
+   "id": "F1",
+   "severity": "CRITICAL",
+   "description": "Cache save/load completely broken. `saveCache` is invoked with a single object `{ts: Date.now(), lat, lon, data: biz}` but the function signature expects 4 arguments `(lat, lon, cats, data)`. Additionally, the call saves `ts` while `loadCache` checks `cached.timestamp`, causing a key mismatch that prevents cache hits.",
+   "fix": "Call `saveCache(lat, lon, cats, biz);` and align the timestamp key in both functions (e.g., use `timestamp` consistently)."
   },
   {
-   "file": "index.html",
-   "issue": "renderBiz filters out closed days that are not today (if (!isToday && !h.isOpen) return ''), contradicting the spec's requirement to render closed days as muted.",
-   "severity": "minor"
+   "id": "F2",
+   "severity": "CRITICAL",
+   "description": "Render logic fails due to `lastData` structure change. `lastData` is now an object `{ list: biz, userLat, userLon }`, but `render()` checks `lastData.length` and spreads `[...lastData]`. Objects do not have `.length` and cannot be spread into arrays, causing silent render failure.",
+   "fix": "Update the condition to `if (lastData && lastData.list && lastData.list.length)` and sort `[...lastData.list]`."
   },
   {
-   "file": "index.html",
-   "issue": "refresh() disables the button immediately, then checks !el('refresh').disabled to decide on cache usage, making the condition permanently false and breaking the specified refresh/cache flow.",
-   "severity": "major"
+   "id": "F3",
+   "severity": "HIGH",
+   "description": "Closed days still dropped from UI. The `daysHtml` mapper contains `if (!isToday && !h.isOpen) return '';`, which removes closed days entirely. The design doc explicitly requires closed days to be rendered muted.",
+   "fix": "Remove the early return. Always render the day span and apply the `closed` class when `!h.isOpen`."
   },
   {
-   "file": "index.html",
-   "issue": "Direct innerHTML assignment with unsanitized business data (biz.name, biz.brand) creates a critical XSS vulnerability.",
-   "severity": "major"
-  },
-  {
-   "file": "index.html",
-   "issue": "refresh() does not clear localStorage on button press, violating the explicit 'Refresh clears cached state' requirement.",
-   "severity": "minor"
-  },
-  {
-   "file": "index.html",
-   "issue": "parseOpenDay helper is defined but never called, resulting in dead code.",
-   "severity": "minor"
+   "id": "F4",
+   "severity": "HIGH",
+   "description": "XSS vulnerability persists. The `esc()` function is defined but only applied to `biz.name` and `area`. `biz.cat`, `biz.brand`, `biz.tags.operator`, `biz.website`, and `biz.phone` are interpolated directly into HTML/template literals, exposing the app to injection via malicious OSM tags.",
+   "fix": "Wrap all dynamic business data in `esc()` before interpolation, especially in `href` attributes and text content."
   }
  ],
- "summary": "The candidate introduces several critical deviations from the design spec. The open-day projection logic is completely bypassed, defaulting all days to open. The refresh/cache mechanism is broken due to a flawed disabled-state check and failure to clear storage. Additionally, the use of innerHTML without sanitization introduces a severe XSS risk. While the visual palette and basic card structure align with the spec, these functional and security flaws require immediate correction before approval."
+ "summary": "The candidate addresses the hardcoded isOpen, refresh guard, and clearCache key mismatch, but introduces critical regressions. Cache persistence is broken by argument/key mismatches, the render function fails on the new `lastData` object structure, closed days are still omitted from the UI, and multiple business fields remain unescaped. These must be corrected before the code can be considered compliant."
 }
