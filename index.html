@@ -21,6 +21,9 @@
   main { max-width:760px; margin:0 auto; padding:0 1rem 2rem; }
   .status { text-align:center; color:var(--muted); font-size:.9rem; min-height:1.4em; padding:.4rem; }
   .specials-note { background:#fdf3e7; border:1px solid #eed9b8; border-radius:8px; padding:.6rem .9rem; font-size:.85rem; margin:.6rem 0; }
+  #results { display:grid; grid-template-columns:1fr 1fr; gap:.6rem; }
+  #results h2 { grid-column: 1 / -1; margin:.8rem 0 .1rem; }
+  #results p { grid-column: 1 / -1; }
   .biz { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:.8rem 1rem; margin:.6rem 0; }
   .biz .top { display:flex; justify-content:space-between; align-items:baseline; gap:.5rem; }
   .biz .name { font-weight:600; }
@@ -208,10 +211,12 @@ function parseHours(openingHours) {
     }
   }
   const days = getDays();
-  return days.map(d => ({
+  const mapped = days.map(d => ({
     date: d.date, day: d.day, isToday: d.isToday,
-    isOpen: found ? openSet.has(d.day) : true  // unknown hours = assume open, labeled
+    isOpen: found ? openSet.has(d.day) : true
   }));
+  mapped.known = found;  // false when biz had no parseable opening_hours
+  return mapped;
 }
 
 // Render business card
@@ -225,16 +230,13 @@ function renderBiz(biz) {
   let links = '';
   const specialsUrl1 = specialsUrl(biz);
   if (specialsUrl1) {
-    links += `<a href="${specialsUrl1}" target="_blank">→ Weekly Ad / Savings Page</a>`;
-  } else if (biz.website) {
-    links += `<a href="${biz.website}" target="_blank">→ Visit Official Site</a>`;
-  } else if (biz.phone) {
-    links += `<a href="tel:${biz.phone}">→ Call for Specials</a>`;
-  } else {
-    links += '<span>Call or check social for weekly specials</span>';
+    links += `<a href="${esc(specialsUrl1)}" target="_blank" rel="noopener">Official Weekly Ad</a>`;
   }
-  
-  const today = new Date().toISOString().split('T')[0];
+  if (biz.website) {
+    links += `<a href="${esc(biz.website)}" target="_blank" rel="noopener">Site</a>`;
+  }
+  // no call offers, no placeholder text: if no links exist, the links row is omitted
+const today = new Date().toISOString().split('T')[0];
   const daysHtml = hours.map(h => {
     const dateStr = h.date;
     const isToday = h.isToday;
@@ -251,12 +253,10 @@ function renderBiz(biz) {
       <div class="dist">${dist} miles</div>
     </div>
     <div class="meta">
-      ${esc(biz.cat)}, ${esc(biz.brand ? biz.brand : (biz.tags.operator || 'Independent'))}
+      ${biz.brand || biz.tags.operator ? esc(biz.cat) + ' · ' + esc(biz.brand || biz.tags.operator) : esc(biz.cat)}
     </div>
-    <div class="links">${links}</div>
-    <div class="days">
-      Open next 5 days: ${daysHtml}
-    </div>
+    ${links ? `<div class="links">${links}</div>` : ""}
+    ${hours.known ? `<div class="days">Open next 5 days: ${daysHtml}</div>` : ""}
   `;
   
   return div.innerHTML;
