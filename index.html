@@ -251,7 +251,7 @@ function renderBiz(biz) {
       <div class="dist">${dist} miles</div>
     </div>
     <div class="meta">
-      ${biz.cat}, ${biz.brand ? biz.brand : (biz.tags.operator || 'Independent')}
+      ${esc(biz.cat)}, ${esc(biz.brand ? biz.brand : (biz.tags.operator || 'Independent'))}
     </div>
     <div class="links">${links}</div>
     <div class="days">
@@ -259,7 +259,7 @@ function renderBiz(biz) {
     </div>
   `;
   
-  return div;
+  return div.innerHTML;
 }
 
 function render() {
