@@ -191,31 +191,30 @@ function getDays() {
 
 // Parse opening_hours and return a list of {day, isOpen}
 function parseHours(openingHours) {
-  const result = [];
-  const hours = [];
-  
-  // Extract relevant patterns from opening_hours
-  const timePattern = /(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})/g;
-  let match;
-  while ((match = timePattern.exec(openingHours))) {
-    hours.push([match[1], match[2]]);
+  const dayMap = {Mo:'Mon',Tu:'Tue',We:'Wed',Th:'Thu',Fr:'Fri',Sa:'Sat',Su:'Sun'};
+  const keys = Object.keys(dayMap);
+  const openSet = new Set();
+  let found = false;
+  if (openingHours) {
+    for (const sp of String(openingHours).split(/[;,]/)) {
+      const m = sp.trim().match(/^(Mo|Tu|We|Th|Fr|Sa|Su)(?:-(Mo|Tu|We|Th|Fr|Sa|Su))?/);
+      if (m) {
+        found = true;
+        const a = keys.indexOf(m[1]), b = m[2] ? keys.indexOf(m[2]) : a;
+        if (b >= a) for (let i=a;i<=b;i++) openSet.add(dayMap[keys[i]]);
+        else { for (let i=a;i<7;i++) openSet.add(dayMap[keys[i]]); for (let i=0;i<=b;i++) openSet.add(dayMap[keys[i]]); }
+      }
+    }
   }
-  
-  // Generate today and next 4 days
   const days = getDays();
-  for (const d of days) {
-    result.push({
-      date: d.date,
-      day: d.day,
-      isToday: d.isToday,
-      isOpen: true // Simplified, real implementation more complex
-    });
-  }
-  
-  return result;
+  return days.map(d => ({
+    date: d.date, day: d.day, isToday: d.isToday,
+    isOpen: found ? openSet.has(d.day) : true  // unknown hours = assume open, labeled
+  }));
 }
 
 // Render business card
+const esc = s => String(s ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;',"'":'&#39;'}[c]));
 function renderBiz(biz) {
   const div = document.createElement('div');
   div.className = 'biz';
@@ -247,7 +246,7 @@ function renderBiz(biz) {
   
   div.innerHTML = `
     <div class="top">
-      <div class="name">${biz.name}</div>
+      <div class="name">${esc(biz.name)}</div>
       <div class="dist">${dist} miles</div>
     </div>
     <div class="meta">
@@ -291,57 +290,47 @@ function loadCache() {
     if (cached.timestamp && Date.now() - cached.timestamp < 10 * 60000) { // 10min
       return cached;
     }
+function clearCache() { try { localStorage.removeItem('discount_specials_cache'); } catch (e) {} }
+
     return null;
   } catch (e) {
     return null;
   }
 }
 
-async function refresh() {
+async function refresh(force = false) {
   const status = el('status');
-  status.innerHTML = 'Requesting location & nearby spots…';
+  status.textContent = 'Requesting location & nearby spots…';
   el('refresh').disabled = true;
-  
-  let lat, lon, area;
   try {
     const loc = await getLocation();
-    lat = loc.lat;
-    lon = loc.lon;
-    
-    const cached = loadCache();
-    if (cached && !el('refresh').disabled) { // refresh button not clicked
-      lastData = cached.data;
-      lastData.userLat = lat;
-      lastData.userLon = lon;
-      el('loc').innerHTML = `${area} <span class="gps">(${lat.toFixed(4)}, ${lon.toFixed(4)})</span>`;
-      render();
+    const lat = loc.lat, lon = loc.lon;
+    if (force) clearCache();  // explicit refresh = bypass + clear cache
+    const cached = force ? null : loadCache();
+    if (cached && Math.abs(cached.lat - lat) < 0.01 && Math.abs(cached.lon - lon) < 0.01) {
+      lastData = cached.data; lastData.userLat = lat; lastData.userLon = lon;
+      status.textContent = `cached ${new Date(cached.ts).toLocaleTimeString()} — press refresh to force`;
+      render(); return;
     }
-    
-    area = await reverseGeocode(lat, lon);
-    el('loc').innerHTML = `${area} <span class="gps">(${lat.toFixed(4)}, ${lon.toFixed(4)})</span>`;
+    status.textContent = 'Finding your town…';
+    let area = 'your area';
+    try { area = await reverseGeocode(lat, lon); } catch (e) {}
+    status.textContent = 'Searching within 5 miles…';
+    const cats = Array.from(activeCats);
+    const biz = await fetchPOIs(lat, lon, cats);
+    biz.forEach(b => b.miles = distMiles(lat, lon, b.lat, b.lon));
+    lastData = { list: biz, userLat: lat, userLon: lon };
+    saveCache({ts: Date.now(), lat, lon, data: biz});
+    el('loc').innerHTML = `${esc(area)} <span class="gps">(${lat.toFixed(3)}, ${lon.toFixed(3)}) · 5 mi</span>`;
+    status.textContent = `${biz.length} places · ${new Date().toLocaleTimeString()}`;
+    render();
   } catch (e) {
-    status.innerHTML = `<span class="err">Error: ${e.message}</span>`;
+    status.innerHTML = `<span class="err">${esc(e.message)}</span> — allow location and retry.`;
+  } finally {
     el('refresh').disabled = false;
-    return;
   }
-  
-  // Get POIs
-  try {
-    const data = await fetchPOIs(lat, lon, [...activeCats]);
-    lastData = data;
-    lastData.userLat = lat;
-    lastData.userLon = lon;
-    saveCache(lat, lon, [...activeCats], data);
-  } catch (e) {
-    status.innerHTML = `<span class="err">Error fetching businesses: ${e.message}</span>`;
-    el('refresh').disabled = false;
-    return;
-  }
-  
-  status.innerHTML = '';
-  el('refresh').disabled = false;
-  render();
 }
+
 
 async function init() {
   // Initialize category checkboxes

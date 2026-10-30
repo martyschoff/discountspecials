@@ -1,0 +1,36 @@
+{
+ "verdict": "CHANGES_REQUIRED",
+ "findings": [
+  {
+   "file": "index.html",
+   "issue": "parseHours completely ignores the openingHours parameter and hardcodes isOpen: true, violating the Open-Day Projection transformation requirement.",
+   "severity": "major"
+  },
+  {
+   "file": "index.html",
+   "issue": "renderBiz filters out closed days that are not today (if (!isToday && !h.isOpen) return ''), contradicting the spec's requirement to render closed days as muted.",
+   "severity": "minor"
+  },
+  {
+   "file": "index.html",
+   "issue": "refresh() disables the button immediately, then checks !el('refresh').disabled to decide on cache usage, making the condition permanently false and breaking the specified refresh/cache flow.",
+   "severity": "major"
+  },
+  {
+   "file": "index.html",
+   "issue": "Direct innerHTML assignment with unsanitized business data (biz.name, biz.brand) creates a critical XSS vulnerability.",
+   "severity": "major"
+  },
+  {
+   "file": "index.html",
+   "issue": "refresh() does not clear localStorage on button press, violating the explicit 'Refresh clears cached state' requirement.",
+   "severity": "minor"
+  },
+  {
+   "file": "index.html",
+   "issue": "parseOpenDay helper is defined but never called, resulting in dead code.",
+   "severity": "minor"
+  }
+ ],
+ "summary": "The candidate introduces several critical deviations from the design spec. The open-day projection logic is completely bypassed, defaulting all days to open. The refresh/cache mechanism is broken due to a flawed disabled-state check and failure to clear storage. Additionally, the use of innerHTML without sanitization introduces a severe XSS risk. While the visual palette and basic card structure align with the spec, these functional and security flaws require immediate correction before approval."
+}
