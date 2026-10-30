@@ -320,10 +320,11 @@ async function refresh(force = false) {
     const cats = Array.from(activeCats);
     const biz = await fetchPOIs(lat, lon, cats);
     biz.forEach(b => b.miles = distMiles(lat, lon, b.lat, b.lon));
-    lastData = { list: biz, userLat: lat, userLon: lon };
-    saveCache(lat, lon, cats, biz);
+    const inRange = biz.filter(b => b.miles <= 5.0);
+    lastData = { list: inRange, userLat: lat, userLon: lon };
+    saveCache(lat, lon, cats, inRange);
     el('loc').innerHTML = `${esc(area)} <span class="gps">(${lat.toFixed(3)}, ${lon.toFixed(3)}) · 5 mi</span>`;
-    status.textContent = `${biz.length} places · ${new Date().toLocaleTimeString()}`;
+    status.textContent = `${inRange.length} places · ${new Date().toLocaleTimeString()}`;
     render();
   } catch (e) {
     status.innerHTML = `<span class="err">${esc(e.message)}</span> — allow location and retry.`;
